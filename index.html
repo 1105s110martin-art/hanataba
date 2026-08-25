@@ -1,0 +1,655 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>花束般的恋爱</title>
+<link rel="stylesheet" href="./src/style.css" />
+
+<script>
+/**
+ * Muse Platform Bridge — auto-injected into game index.html
+ * Features: screenshot capture, video recording
+ * Uses direct canvas capture for maximum quality and reliability.
+ * Passive only — responds to postMessage, never runs proactively
+ */
+(function() {
+  if (window.__museBridgeInjected) return;
+  window.__museBridgeInjected = true;
+
+  // ── Center game canvas in viewport (canvas games only) ────
+  // Applied only when <body> is canvas-dominated: a bare <canvas>, or a
+  // single wrapper holding a canvas and almost nothing else. DOM-layout
+  // games must keep the browser default: body{display:flex} turns the game
+  // root into a shrink-to-fit flex item, collapsing every percentage width
+  // that resolves against it. Canvases are usually created by the game
+  // script after DOM ready, so watch mutations briefly before settling.
+  // False negatives (canvas game left uncentered) are acceptable; false
+  // positives (DOM game centered) are not — bias detection accordingly.
+  (function() {
+    var applied = false;
+    function apply() {
+      if (applied) return;
+      applied = true;
+      var s = document.createElement('style');
+      s.textContent = 'html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#000}body{display:flex;align-items:center;justify-content:center}';
+      var head = document.head || document.documentElement;
+      // start of <head> so game-specific CSS can override
+      head.insertBefore(s, head.firstChild);
+    }
+    var NON_CONTENT = { SCRIPT: 1, STYLE: 1, LINK: 1, META: 1, TEMPLATE: 1 };
+    function isCanvasPage() {
+      if (!document.body) return false;
+      var kids = Array.prototype.filter.call(document.body.children, function(c) {
+        return !NON_CONTENT[c.tagName];
+      });
+      if (kids.length !== 1) return false;
+      var root = kids[0];
+      if (root.tagName === 'CANVAS') return true;
+      if (!root.getElementsByTagName('canvas').length) return false;
+      var nonCanvas = Array.prototype.filter.call(root.querySelectorAll('*'), function(el) {
+        return el.tagName !== 'CANVAS' && !NON_CONTENT[el.tagName];
+      });
+      return nonCanvas.length <= 3;
+    }
+    function check() {
+      if (!applied && isCanvasPage()) apply();
+      return applied;
+    }
+    function watch() {
+      if (check() || typeof MutationObserver === 'undefined') return;
+      var mo = new MutationObserver(function() { if (check()) mo.disconnect(); });
+      mo.observe(document.body, { childList: true, subtree: true });
+      setTimeout(function() { mo.disconnect(); }, 10000);
+    }
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', watch);
+    } else {
+      watch();
+    }
+  })();
+
+  // ── Force preserveDrawingBuffer for WebGL canvases ─────────
+  // Without this, canvas.toDataURL() returns blank between frames.
+  var _origGetContext = HTMLCanvasElement.prototype.getContext;
+  HTMLCanvasElement.prototype.getContext = function(type, attrs) {
+    if (type === 'webgl' || type === 'webgl2' || type === 'experimental-webgl') {
+      attrs = Object.assign({}, attrs || {}, { preserveDrawingBuffer: true });
+    }
+    return _origGetContext.call(this, type, attrs);
+  };
+
+  // ── Asset Path Rewriter ─────────────────────────────────────
+  // Re-prefix root-absolute asset URLs (`/assets/foo.png`, `/audio/x.mp3`, …)
+  // with the current game-proxy base so games written with traditional
+  // leading-slash strings work behind the dev preview reverse proxy.
+  //
+  // Done at runtime via API monkey-patching — much safer than server-side
+  // regex over JS bodies which would corrupt third-party libs that use
+  // similar-shaped string literals for non-URL purposes (source-map paths,
+  // sentinel data, etc).
+  //
+  // The asset root whitelist mirrors
+  // muse_shed.server.api.game_preview._PROXY_REWRITE_ROOTS — if you add a
+  // new asset root there, mirror it here or runtime requests will 404.
+  (function() {
+    function configuredProxyBase() {
+      var cfg = window.__musePreview || {};
+      return typeof cfg.proxyBase === 'string' ? cfg.proxyBase.replace(/\/$/, '') : '';
+    }
+
+    function detectProxyBase() {
+      var configured = configuredProxyBase();
+      if (configured) return configured;
+      var path = location.pathname;
+      var gpIdx = path.indexOf('/game-proxy/');
+      if (gpIdx !== -1) return path.substring(0, gpIdx) + '/game-proxy';
+      var previewMatch = path.match(/^(.*\/preview\/[^/]+)(?:\/|$)/);
+      return previewMatch ? previewMatch[1] : '';
+    }
+
+    var base = detectProxyBase();
+    if (!base) return;
+    var ROOTS = ['assets','audio','data','fonts','images','img','levels',
+                 'maps','music','sfx','sounds','sprites','textures','ui','videos'];
+    var ASSET_RE = new RegExp('^/(?:' + ROOTS.join('|') + ')(/|$)');
+
+    function rewrite(url) {
+      if (typeof url !== 'string') return url;
+      if (!ASSET_RE.test(url)) return url;
+      if (url === base || url.indexOf(base + '/') === 0) return url;
+      return base + url;
+    }
+
+    // fetch()
+    if (typeof window.fetch === 'function') {
+      var origFetch = window.fetch.bind(window);
+      window.fetch = function(input, init) {
+        try {
+          if (typeof input === 'string') {
+            input = rewrite(input);
+          } else if (input && typeof input.url === 'string') {
+            var rewritten = rewrite(input.url);
+            if (rewritten !== input.url) input = new Request(rewritten, input);
+          }
+        } catch (e) { /* fall through with original input */ }
+        return origFetch(input, init);
+      };
+    }
+
+    // XMLHttpRequest.open()
+    var origXHROpen = XMLHttpRequest.prototype.open;
+    XMLHttpRequest.prototype.open = function(method, url) {
+      var rest = Array.prototype.slice.call(arguments, 2);
+      try { url = rewrite(url); } catch (e) {}
+      return origXHROpen.apply(this, [method, url].concat(rest));
+    };
+
+    // .src setter on Image / Audio / Video / Source elements.
+    function patchSrcSetter(proto) {
+      if (!proto) return;
+      var desc = Object.getOwnPropertyDescriptor(proto, 'src');
+      if (!desc || typeof desc.set !== 'function' || !desc.configurable) return;
+      var origSet = desc.set;
+      Object.defineProperty(proto, 'src', {
+        configurable: true,
+        enumerable: desc.enumerable,
+        get: desc.get,
+        set: function(v) {
+          try { v = rewrite(v); } catch (e) {}
+          return origSet.call(this, v);
+        },
+      });
+    }
+    patchSrcSetter(window.HTMLImageElement && HTMLImageElement.prototype);
+    patchSrcSetter(window.HTMLMediaElement && HTMLMediaElement.prototype);
+    patchSrcSetter(window.HTMLSourceElement && HTMLSourceElement.prototype);
+
+    // setAttribute('src'|'href') — some libs go through this rather than .src.
+    var origSetAttr = Element.prototype.setAttribute;
+    Element.prototype.setAttribute = function(name, value) {
+      if ((name === 'src' || name === 'href') && typeof value === 'string') {
+        try { value = rewrite(value); } catch (e) {}
+      }
+      return origSetAttr.call(this, name, value);
+    };
+  })();
+
+  function getCanvas() {
+    return document.querySelector('canvas');
+  }
+
+  // ── DOM Snapshot ────────────────────────────────────────────
+  // Games draw the scene on <canvas> but render HUD/UI as DOM, so direct
+  // canvas capture always misses the UI layer. Rasterize the live DOM
+  // instead: clone the tree with computed styles inlined, convert
+  // images / canvases / CSS background urls to data URLs (foreignObject
+  // rendering never loads external resources, and data URLs keep the
+  // output canvas untainted), then draw the SVG onto a canvas. Canvases
+  // are embedded as rasterized <img>, so the snapshot covers canvas-only,
+  // DOM-only and hybrid pages alike.
+  var snapshotDom = (function() {
+    var dataUrlCache = {};
+
+    function inlineUrl(url, done) {
+      if (dataUrlCache[url] !== undefined) { done(dataUrlCache[url]); return; }
+      try {
+        fetch(url).then(function(resp) {
+          if (!resp.ok) throw new Error('HTTP ' + resp.status);
+          return resp.blob();
+        }).then(function(blob) {
+          var reader = new FileReader();
+          reader.onload = function() { dataUrlCache[url] = reader.result; done(reader.result); };
+          reader.onerror = function() { dataUrlCache[url] = null; done(null); };
+          reader.readAsDataURL(blob);
+        }).catch(function() { dataUrlCache[url] = null; done(null); });
+      } catch (e) { done(null); }
+    }
+
+    var CSS_URL_RE = /url\((['"]?)([^'")]+)\1\)/g;
+
+    // Computed styles resolve url() against the page, so background images
+    // reference external URLs — swap each for a data URL, then rewrite the
+    // style attribute once all fetches settle.
+    function inlineStyleUrls(dst, styleText, pending) {
+      var urls = [];
+      var m;
+      CSS_URL_RE.lastIndex = 0;
+      while ((m = CSS_URL_RE.exec(styleText)) !== null) {
+        if (m[2].indexOf('data:') !== 0 && urls.indexOf(m[2]) === -1) urls.push(m[2]);
+      }
+      if (!urls.length) return;
+      pending.push(function(done) {
+        var left = urls.length;
+        var resolved = {};
+        for (var i = 0; i < urls.length; i++) {
+          (function(u) {
+            inlineUrl(u, function(dataUrl) {
+              resolved[u] = dataUrl;
+              if (--left === 0) {
+                var next = styleText.replace(CSS_URL_RE, function(full, q, u2) {
+                  if (u2.indexOf('data:') === 0) return full;
+                  return resolved[u2] ? 'url("' + resolved[u2] + '")' : 'none';
+                });
+                dst.setAttribute('style', next);
+                done();
+              }
+            });
+          })(urls[i]);
+        }
+      });
+    }
+
+    var SKIP_TAGS = { SCRIPT: 1, STYLE: 1, LINK: 1, META: 1, NOSCRIPT: 1, TEMPLATE: 1, IFRAME: 1 };
+
+    function cloneTree(src, pending) {
+      if (src.nodeType === 3) return document.createTextNode(src.nodeValue);
+      if (src.nodeType !== 1) return null;
+      var tag = src.tagName;
+      if (SKIP_TAGS[tag]) return null;
+      var cs = window.getComputedStyle(src);
+      if (cs.display === 'none') return null;
+
+      var dst = null;
+      var cloneChildren = true;
+
+      if (tag === 'CANVAS') {
+        cloneChildren = false;
+        try {
+          dst = document.createElement('img');
+          dst.setAttribute('src', src.toDataURL('image/png'));
+        } catch (e) { dst = document.createElement('div'); }
+      } else if (tag === 'VIDEO') {
+        cloneChildren = false;
+        dst = document.createElement('div');
+        try {
+          if (src.videoWidth && src.videoHeight) {
+            var vc = document.createElement('canvas');
+            vc.width = src.videoWidth;
+            vc.height = src.videoHeight;
+            vc.getContext('2d').drawImage(src, 0, 0);
+            dst = document.createElement('img');
+            dst.setAttribute('src', vc.toDataURL('image/png'));
+          }
+        } catch (e) {}
+      } else if (tag === 'IMG') {
+        cloneChildren = false;
+        dst = document.createElement('img');
+        var srcUrl = src.currentSrc || src.src || '';
+        if (srcUrl.indexOf('data:') === 0) {
+          dst.setAttribute('src', srcUrl);
+        } else if (srcUrl) {
+          (function(imgDst, u) {
+            pending.push(function(done) {
+              inlineUrl(u, function(dataUrl) {
+                if (dataUrl) imgDst.setAttribute('src', dataUrl);
+                done();
+              });
+            });
+          })(dst, srcUrl);
+        }
+      } else if (tag === 'BODY') {
+        // <body> outside a document doesn't lay out inside foreignObject —
+        // stand in a <div> carrying body's computed style.
+        dst = document.createElement('div');
+      } else {
+        dst = src.cloneNode(false);
+        dst.removeAttribute('srcset');
+      }
+
+      var styleText = '';
+      for (var i = 0; i < cs.length; i++) {
+        var prop = cs[i];
+        styleText += prop + ':' + cs.getPropertyValue(prop) + ';';
+      }
+      dst.setAttribute('style', styleText);
+      inlineStyleUrls(dst, styleText, pending);
+
+      if (tag === 'INPUT') {
+        try { dst.setAttribute('value', src.value); } catch (e) {}
+      } else if (tag === 'TEXTAREA') {
+        cloneChildren = false;
+        dst.textContent = src.value;
+      }
+
+      if (cloneChildren) {
+        for (var child = src.firstChild; child; child = child.nextSibling) {
+          var c = cloneTree(child, pending);
+          if (c) dst.appendChild(c);
+        }
+      }
+      return dst;
+    }
+
+    return function(onCanvas, onError) {
+      try {
+        var W = Math.max(1, window.innerWidth);
+        var H = Math.max(1, window.innerHeight);
+        var pending = [];
+        var root = cloneTree(document.body, pending);
+        if (!root) { onError(new Error('页面内容为空，无法截图')); return; }
+
+        var finished = false;
+        function finalize() {
+          if (finished) return;
+          finished = true;
+          try {
+            var xml = new XMLSerializer().serializeToString(root);
+            var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + W + '" height="' + H + '">' +
+              '<foreignObject x="0" y="0" width="100%" height="100%">' + xml + '</foreignObject></svg>';
+            var img = new Image();
+            img.onload = function() {
+              try {
+                var dpr = Math.min(window.devicePixelRatio || 1, 2);
+                var canvas = document.createElement('canvas');
+                canvas.width = Math.round(W * dpr);
+                canvas.height = Math.round(H * dpr);
+                var ctx = canvas.getContext('2d');
+                // JPEG export has no alpha — pre-fill the page background.
+                var bg = window.getComputedStyle(document.documentElement).backgroundColor;
+                ctx.fillStyle = (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') ? bg : '#000';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.scale(dpr, dpr);
+                ctx.drawImage(img, 0, 0, W, H);
+                onCanvas(canvas);
+              } catch (e) { onError(e); }
+            };
+            img.onerror = function() { onError(new Error('DOM 快照渲染失败')); };
+            img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+          } catch (e) { onError(e); }
+        }
+
+        // A stuck asset fetch shouldn't hang the shot — render what we have.
+        var guard = setTimeout(finalize, 2500);
+        var remaining = pending.length;
+        if (!remaining) { clearTimeout(guard); finalize(); return; }
+        function step() { if (--remaining === 0) { clearTimeout(guard); finalize(); } }
+        for (var i = 0; i < pending.length; i++) {
+          try { pending[i](step); } catch (e) { step(); }
+        }
+      } catch (e) { onError(e); }
+    };
+  })();
+
+  // ── Screenshot ──────────────────────────────────────────────
+  window.addEventListener('message', function(event) {
+    if (event.data?.type !== 'screenshot-request') return;
+
+    // Capture inside rAF to ensure the canvas has a fresh frame
+    requestAnimationFrame(function() {
+      function respond(canvas) {
+        window.parent.postMessage({
+          type: 'screenshot-response', success: true,
+          imageData: canvas.toDataURL('image/png')
+        }, '*');
+      }
+      function fail(message) {
+        window.parent.postMessage({
+          type: 'screenshot-response', success: false, error: message
+        }, '*');
+      }
+      // DOM snapshot first — canvas games render UI as DOM too, direct
+      // canvas capture would drop it. Fall back to the bare canvas
+      // (scene without UI) only when the snapshot itself fails.
+      snapshotDom(respond, function(snapErr) {
+        try {
+          var canvas = getCanvas();
+          if (!canvas) {
+            fail(snapErr && snapErr.message ? snapErr.message : 'DOM snapshot failed');
+            return;
+          }
+          respond(canvas);
+        } catch(e) {
+          fail(e.message);
+        }
+      });
+    });
+  });
+
+  // ── Console Capture ──────────────────────────────────────────
+  // Intercept console.{log,info,warn,error,debug} and POST batches
+  // through the game-proxy path for AI agent debugging.
+  (function() {
+    var LEVELS = ['log', 'info', 'warn', 'error', 'debug'];
+    var originals = {};
+    var queue = [];
+    var flushTimer = null;
+    var FLUSH_MS = 500;
+    var MAX_MSG = 2000;
+    var MAX_QUEUE = 200;
+
+    function detectConsoleUrl() {
+      var cfg = window.__musePreview || {};
+      if (typeof cfg.consoleUrl === 'string' && cfg.consoleUrl) return cfg.consoleUrl;
+      var configured = typeof cfg.proxyBase === 'string' ? cfg.proxyBase.replace(/\/$/, '') : '';
+      if (configured) {
+        return configured.indexOf('/game-proxy') !== -1
+          ? configured + '/__console'
+          : configured + '/_muse/console';
+      }
+      var path = window.location.pathname;
+      var gpIdx = path.indexOf('/game-proxy/');
+      if (gpIdx !== -1) return path.substring(0, gpIdx) + '/game-proxy/__console';
+      var previewMatch = path.match(/^(.*\/preview\/[^/]+)(?:\/|$)/);
+      return previewMatch ? previewMatch[1] + '/_muse/console' : '/_muse/console';
+    }
+
+    var consoleUrl = detectConsoleUrl();
+
+    function stringify(args) {
+      var parts = [];
+      for (var i = 0; i < args.length; i++) {
+        var a = args[i];
+        if (a === null) { parts.push('null'); continue; }
+        if (a === undefined) { parts.push('undefined'); continue; }
+        if (typeof a === 'string') { parts.push(a); continue; }
+        if (a instanceof Error) { parts.push(a.stack || a.message || String(a)); continue; }
+        try { parts.push(JSON.stringify(a)); } catch(e) { parts.push(String(a)); }
+      }
+      var msg = parts.join(' ');
+      return msg.length > MAX_MSG ? msg.slice(0, MAX_MSG) + '...' : msg;
+    }
+
+    function flush() {
+      flushTimer = null;
+      if (!queue.length) return;
+      var batch = queue.splice(0);
+      try {
+        var blob = new Blob([JSON.stringify(batch)], { type: 'application/json' });
+        navigator.sendBeacon(consoleUrl, blob);
+      } catch(e) {
+        // fetch fallback
+        try {
+          fetch(consoleUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(batch),
+            keepalive: true
+          }).catch(function(){});
+        } catch(e2) {}
+      }
+    }
+
+    function enqueue(level, args) {
+      queue.push({ level: level, message: stringify(args) });
+      if (queue.length >= MAX_QUEUE) { flush(); return; }
+      if (!flushTimer) flushTimer = setTimeout(flush, FLUSH_MS);
+    }
+
+    for (var i = 0; i < LEVELS.length; i++) {
+      (function(level) {
+        originals[level] = console[level];
+        console[level] = function() {
+          originals[level].apply(console, arguments);
+          enqueue(level, arguments);
+        };
+      })(LEVELS[i]);
+    }
+
+    // Capture uncaught errors
+    window.addEventListener('error', function(ev) {
+      enqueue('error', ['Uncaught: ' + (ev.message || '') + ' at ' + (ev.filename || '') + ':' + (ev.lineno || '')]);
+    });
+    window.addEventListener('unhandledrejection', function(ev) {
+      var reason = ev.reason;
+      var msg = (reason instanceof Error) ? (reason.stack || reason.message) : String(reason);
+      enqueue('error', ['Unhandled rejection: ' + msg]);
+    });
+
+    // Flush remaining logs on page unload
+    window.addEventListener('pagehide', flush);
+
+    // ── Environment snapshot ─────────────────────────────────
+    // Reports the real user's rendering environment as a `[muse-env] {json}`
+    // line through this console channel, so agents can read it back via
+    // get_console_logs and verify display bugs at the user's ACTUAL
+    // devicePixelRatio — DPR-class defects are structurally invisible at
+    // DPR=1 and enumerating scale factors misses fractional/3x screens.
+    function reportEnv(trigger) {
+      enqueue('info', ['[muse-env] ' + JSON.stringify({
+        trigger: trigger,
+        dpr: window.devicePixelRatio || 1,
+        viewport: window.innerWidth + 'x' + window.innerHeight,
+        screen: (window.screen ? screen.width + 'x' + screen.height : ''),
+        ua: navigator.userAgent
+      })]);
+    }
+    reportEnv('load');
+    var lastDpr = window.devicePixelRatio;
+    // DPR changes when the window moves across screens or browser zoom
+    // changes — both fire resize. Viewport-only changes are not re-reported
+    // to avoid spamming the channel while the preview panel is dragged.
+    window.addEventListener('resize', function() {
+      if (window.devicePixelRatio !== lastDpr) {
+        lastDpr = window.devicePixelRatio;
+        reportEnv('dpr-change');
+      }
+    });
+  })();
+
+  // ── Config Bridge ───────────────────────────────────────────
+  // Receives config updates from TuningPanel, relays to game engine
+  window.addEventListener('message', function(event) {
+    if (event.data?.type !== 'config-update') return;
+    window.__museGameConfig = event.data.config;
+    window.dispatchEvent(new CustomEvent('muse:config-updated', {
+      detail: event.data.config
+    }));
+  });
+
+  // ── Data Bridge ────────────────────────────────────────────
+  // Receives content editor saves from host, relays to game engine
+  window.addEventListener('message', function(event) {
+    if (event.data?.type !== 'data-update') return;
+    window.dispatchEvent(new CustomEvent('muse:data-updated', {
+      detail: { path: event.data.path, content: event.data.content }
+    }));
+  });
+
+  // ── Recording ───────────────────────────────────────────────
+  var recorder = null;
+  var chunks = [];
+
+  window.addEventListener('message', function(event) {
+    if (event.data?.type === 'recording-start') {
+      if (recorder && recorder.state === 'recording') return;
+
+      try {
+        var canvas = getCanvas();
+        if (!canvas) {
+          window.parent.postMessage({ type: 'recording-error', error: 'No canvas element found' }, '*');
+          return;
+        }
+
+        var stream = canvas.captureStream(30); // 30fps
+        chunks = [];
+
+        var mimeType = 'video/webm; codecs=vp9';
+        if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'video/webm; codecs=vp8';
+        if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'video/webm';
+        if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'video/mp4';
+        if (!MediaRecorder.isTypeSupported(mimeType)) {
+          window.parent.postMessage({ type: 'recording-error', error: 'No supported recording format' }, '*');
+          return;
+        }
+
+        recorder = new MediaRecorder(stream, {
+          mimeType: mimeType,
+          videoBitsPerSecond: 2500000
+        });
+        recorder.ondataavailable = function(e) {
+          if (e.data.size > 0) chunks.push(e.data);
+        };
+        recorder.onstop = function() {
+          var blob = new Blob(chunks, { type: mimeType });
+          window.parent.postMessage({
+            type: 'recording-complete', videoBlob: blob, mimeType: mimeType
+          }, '*');
+          recorder = null;
+          chunks = [];
+        };
+        recorder.start(100);
+        window.parent.postMessage({ type: 'recording-started' }, '*');
+
+      } catch(e) {
+        window.parent.postMessage({ type: 'recording-error', error: e.message }, '*');
+      }
+    }
+
+    if (event.data?.type === 'recording-stop') {
+      if (recorder && recorder.state === 'recording') {
+        recorder.stop();
+      }
+    }
+  });
+
+  // ── Runtime Ready ──────────────────────────────────────────
+  // Notify parent that the bridge is initialized and ready to receive messages
+  window.parent.postMessage({ type: 'muse:runtime-ready' }, '*');
+
+  // ── Canvas Ready ──────────────────────────────────────────
+  // Notify parent once a <canvas> exists and has rendered its first frame.
+  // PublishDialog waits for this before attempting screenshot capture.
+  (function() {
+    function signalCanvasReady() {
+      requestAnimationFrame(function() {
+        requestAnimationFrame(function() {
+          var msg = { type: 'muse:canvas-ready' };
+          var canvas = document.querySelector('canvas');
+          if (canvas) {
+            msg.width = canvas.width;
+            msg.height = canvas.height;
+          }
+          window.parent.postMessage(msg, '*');
+        });
+      });
+    }
+
+    if (document.querySelector('canvas')) {
+      signalCanvasReady();
+      return;
+    }
+
+    var observer = new MutationObserver(function() {
+      if (document.querySelector('canvas')) {
+        observer.disconnect();
+        signalCanvasReady();
+      }
+    });
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+
+    // Fallback: signal after 15s even if no canvas appears
+    setTimeout(function() {
+      observer.disconnect();
+      window.parent.postMessage({ type: 'muse:canvas-ready' }, '*');
+    }, 15000);
+  })();
+})();
+
+</script>
+</head>
+<body>
+<div id="app"></div>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>

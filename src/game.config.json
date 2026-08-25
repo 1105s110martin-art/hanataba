@@ -1,0 +1,28 @@
+{
+  "curves": {
+    "mugiFaithStart": 70,
+    "kinuFaithStart": 80,
+    "kinuLaborStart": 100,
+    "syncStart": 400
+  },
+  "labor": {
+    "costPerAct": 14,
+    "recoveryRate": 0.34,
+    "exhaustThreshold": 18
+  },
+  "coupling": {
+    "mugiToKinu": 0.5,
+    "kinuToMugi": 0.4
+  },
+  "flow": {
+    "irreversibleYear": 2017,
+    "declineThreshold": 80,
+    "weekSlots": 3,
+    "totalWeeks": 8
+  },
+  "options": {
+    "showTradeStamp": true,
+    "forceDualView": true,
+    "skipPrologueTutorial": false
+  }
+}

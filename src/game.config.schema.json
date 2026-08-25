@@ -1,0 +1,53 @@
+{
+  "type": "object",
+  "x-groups": [
+    { "key": "curves", "title": "三条曲线初始值" },
+    { "key": "labor", "title": "情感劳动" },
+    { "key": "coupling", "title": "双线耦合" },
+    { "key": "flow", "title": "节奏与阈值" },
+    { "key": "options", "title": "开关" }
+  ],
+  "properties": {
+    "curves": {
+      "type": "object",
+      "properties": {
+        "mugiFaithStart": { "type": "number", "default": 70, "minimum": 30, "maximum": 100, "x-control": "slider", "x-step": 1, "x-label": "麦·信念值 起点", "x-order": 1 },
+        "kinuFaithStart": { "type": "number", "default": 80, "minimum": 30, "maximum": 100, "x-control": "slider", "x-step": 1, "x-label": "绢·信念值 起点", "x-order": 2 },
+        "kinuLaborStart": { "type": "number", "default": 100, "minimum": 40, "maximum": 100, "x-control": "slider", "x-step": 1, "x-label": "绢·情感劳动 起点", "x-order": 3 },
+        "syncStart": { "type": "number", "default": 400, "minimum": 200, "maximum": 400, "x-control": "slider", "x-step": 10, "x-label": "同步率 起点(%)", "x-order": 4 }
+      }
+    },
+    "labor": {
+      "type": "object",
+      "properties": {
+        "costPerAct": { "type": "number", "default": 14, "minimum": 4, "maximum": 30, "x-control": "slider", "x-step": 1, "x-label": "每次主动付出的消耗", "x-order": 1 },
+        "recoveryRate": { "type": "number", "default": 0.34, "minimum": 0.1, "maximum": 1, "x-control": "slider", "x-step": 0.02, "x-label": "恢复系数(1=消耗即回满)", "x-order": 2 },
+        "exhaustThreshold": { "type": "number", "default": 18, "minimum": 0, "maximum": 40, "x-control": "slider", "x-step": 1, "x-label": "情感耗竭阈值", "x-order": 3 }
+      }
+    },
+    "coupling": {
+      "type": "object",
+      "properties": {
+        "mugiToKinu": { "type": "number", "default": 0.5, "minimum": 0, "maximum": 1.5, "x-control": "slider", "x-step": 0.05, "x-label": "麦信念下降→绢额外耗损", "x-order": 1 },
+        "kinuToMugi": { "type": "number", "default": 0.4, "minimum": 0, "maximum": 1.5, "x-control": "slider", "x-step": 0.05, "x-label": "绢耗竭→麦信念额外下降", "x-order": 2 }
+      }
+    },
+    "flow": {
+      "type": "object",
+      "properties": {
+        "irreversibleYear": { "type": "number", "default": 2017, "minimum": 2016, "maximum": 2019, "x-control": "slider", "x-step": 1, "x-label": "同步率转为不可逆的年份", "x-order": 1 },
+        "declineThreshold": { "type": "number", "default": 80, "minimum": 40, "maximum": 120, "x-control": "slider", "x-step": 1, "x-label": "预期凋敝阈值", "x-order": 2 },
+        "weekSlots": { "type": "number", "default": 3, "minimum": 1, "maximum": 5, "x-control": "slider", "x-step": 1, "x-label": "每周时间格数量", "x-order": 3 },
+        "totalWeeks": { "type": "number", "default": 8, "minimum": 3, "maximum": 12, "x-control": "slider", "x-step": 1, "x-label": "第二幕日常周数", "x-order": 4 }
+      }
+    },
+    "options": {
+      "type": "object",
+      "properties": {
+        "showTradeStamp": { "type": "boolean", "default": true, "x-control": "toggle", "x-label": "显示交易属性印章", "x-order": 1 },
+        "forceDualView": { "type": "boolean", "default": true, "x-control": "toggle", "x-label": "关键场景强制双视角", "x-order": 2 },
+        "skipPrologueTutorial": { "type": "boolean", "default": false, "x-control": "toggle", "x-label": "跳过序幕教学提示", "x-order": 3 }
+      }
+    }
+  }
+}
